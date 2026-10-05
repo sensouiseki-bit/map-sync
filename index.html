@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3画面連動マップ</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+    #header {
+      height: 48px; background: #2c3e50; color: #fff; display: flex;
+      align-items: center; justify-content: space-between; padding: 0 16px; z-index: 1000;
+    }
+    .btn-capture {
+      background: #e67e22; color: #fff; border: none; padding: 6px 14px;
+      font-size: 13px; font-weight: bold; border-radius: 4px; cursor: pointer;
+    }
+    .btn-capture:hover { background: #d35400; }
+    #container { flex: 1; display: flex; width: 100%; height: calc(100vh - 48px); }
+    #left-panel { flex: 1.2; height: 100%; border-right: 2px solid #ccc; position: relative; }
+    #right-panel { flex: 1; display: flex; flex-direction: column; height: 100%; }
+    #map-past { flex: 1; border-bottom: 2px solid #ccc; position: relative; }
+    #map-cadastre { flex: 1; position: relative; }
+    .map-label {
+      position: absolute; top: 8px; left: 50px; z-index: 999;
+      background: rgba(0,0,0,0.7); color: #fff; padding: 3px 8px;
+      font-size: 11px; border-radius: 3px; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="header">
+    <span style="font-size: 14px; font-weight: bold;">連動地図ビューア</span>
+    <div>
+      <select id="era-select" style="padding: 4px; font-size: 12px; margin-right: 8px;">
+        <option value="ort_USA10">過去写真: 1945〜50年(米軍)</option>
+        <option value="gazo1">過去写真: 1974〜78年</option>
+        <option value="ort_old10">過去写真: 1961〜69年</option>
+      </select>
+      <button class="btn-capture" onclick="captureMaps()">📷 画面を画像保存</button>
+    </div>
+  </div>
+
+  <div id="container">
+    <div id="left-panel">
+      <div class="map-label">最新 航空写真（地理院）</div>
+      <div id="map1" style="width: 100%; height: 100%;"></div>
+    </div>
+    <div id="right-panel">
+      <div id="map-past">
+        <div class="map-label" id="past-label">国土地理院 過去写真</div>
+        <div id="map2" style="width: 100%; height: 100%;"></div>
+      </div>
+      <div id="map-cadastre">
+        <div class="map-label">公図・地番 / 白地図</div>
+        <div id="map3" style="width: 100%; height: 100%;"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // URL引数（?lat=...&lng=...&zoom=...）から座標を取得
+    const params = new URLSearchParams(window.location.search);
+    const initLat = parseFloat(params.get('lat')) || 34.6873;
+    const initLng = parseFloat(params.get('lng')) || 135.5262;
+    const initZoom = parseInt(params.get('zoom')) || 16;
+
+    // 1. 最新写真マップ
+    const map1 = L.map('map1', { zoomControl: true }).setView([initLat, initLng], initZoom);
+    L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', {
+      attribution: '国土地理院', maxZoom: 18
+    }).addTo(map1);
+    L.marker([initLat, initLng]).addTo(map1);
+
+    // 2. 過去写真マップ
+    const map2 = L.map('map2', { zoomControl: false }).setView([initLat, initLng], initZoom);
+    let pastLayer = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/ort_USA10/{z}/{x}/{y}.png', {
+      attribution: '国土地理院', maxZoom: 18
+    }).addTo(map2);
+    L.marker([initLat, initLng]).addTo(map2);
+
+    // 3. 公図・地番 / 標準マップ
+    const map3 = L.map('map3', { zoomControl: false }).setView([initLat, initLng], initZoom);
+    L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
+      attribution: '国土地理院', maxZoom: 18
+    }).addTo(map3);
+    L.marker([initLat, initLng]).addTo(map3);
+
+    // 3画面の位置連動処理
+    let isSyncing = false;
+    const maps = [map1, map2, map3];
+
+    maps.forEach(sourceMap => {
+      sourceMap.on('move', () => {
+        if (isSyncing) return;
+        isSyncing = true;
+        const center = sourceMap.getCenter();
+        const zoom = sourceMap.getZoom();
+        maps.forEach(targetMap => {
+          if (targetMap !== sourceMap) {
+            targetMap.setView(center, zoom, { animate: false });
+          }
+        });
+        isSyncing = false;
+      });
+    });
+
+    // 年代切替
+    document.getElementById('era-select').addEventListener('change', (e) => {
+      map2.removeLayer(pastLayer);
+      pastLayer = L.tileLayer(`https://cyberjapandata.gsi.go.jp/xyz/${e.target.value}/{z}/{x}/{y}.png`, {
+        attribution: '国土地理院', maxZoom: 18
+      }).addTo(map2);
+    });
+
+    // キャプチャ保存
+    function captureMaps() {
+      const container = document.getElementById('container');
+      html2canvas(container, { useCORS: true }).then(canvas => {
+        const link = document.createElement('a');
+        link.download = `map_compare_${Date.now()}.png`;
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+      }).catch(err => alert('キャプチャに失敗しました: ' + err));
+    }
+  </script>
+</body>
+</html>
