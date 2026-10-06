@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>3画面連動マップ（戦跡調査ビューア）</title>
+  <title>戦跡調査 右側ビューア</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -11,141 +11,148 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; background: #1a1a1a; }
     #header {
-      height: 48px; background: #2c3e50; color: #fff; display: flex;
-      align-items: center; justify-content: space-between; padding: 0 16px; z-index: 1000;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      height: 42px; background: #2c3e50; color: #fff; display: flex;
+      align-items: center; justify-content: space-between; padding: 0 12px; z-index: 1000;
     }
-    .header-title { font-size: 15px; font-weight: bold; letter-spacing: 0.5px; }
-    .header-controls { display: flex; align-items: center; gap: 8px; }
-    #era-select {
-      padding: 6px 10px; font-size: 13px; border-radius: 4px; border: 1px solid #4a627a;
+    .select-box {
+      padding: 4px 8px; font-size: 11px; border-radius: 4px; border: 1px solid #4a627a;
       background: #34495e; color: #fff; cursor: pointer; outline: none;
     }
     .btn-capture {
-      background: #e67e22; color: #fff; border: none; padding: 6px 14px;
-      font-size: 13px; font-weight: bold; border-radius: 4px; cursor: pointer;
-      transition: background 0.2s;
+      background: #e67e22; color: #fff; border: none; padding: 5px 12px;
+      font-size: 11px; font-weight: bold; border-radius: 4px; cursor: pointer;
     }
     .btn-capture:hover { background: #d35400; }
-    #container { flex: 1; display: flex; width: 100%; height: calc(100vh - 48px); }
-    #left-panel { flex: 1.2; height: 100%; border-right: 2px solid #444; position: relative; }
-    #right-panel { flex: 1; display: flex; flex-direction: column; height: 100%; }
-    #map-past { flex: 1; border-bottom: 2px solid #444; position: relative; }
-    #map-cadastre { flex: 1; position: relative; }
+    #container { flex: 1; display: flex; flex-direction: column; width: 100%; height: calc(100vh - 42px); }
+    #map-top { flex: 1; border-bottom: 2px solid #444; position: relative; }
+    #map-bottom-container { flex: 1; position: relative; background: #fff; }
     .map-label {
-      position: absolute; top: 10px; left: 52px; z-index: 999;
-      background: rgba(0, 0, 0, 0.75); color: #fff; padding: 4px 10px;
-      font-size: 12px; font-weight: 500; border-radius: 4px; pointer-events: none;
-      border: 1px solid rgba(255, 255, 255, 0.2);
+      position: absolute; top: 8px; left: 10px; z-index: 999;
+      background: rgba(0, 0, 0, 0.75); color: #fff; padding: 3px 8px;
+      font-size: 11px; font-weight: bold; border-radius: 3px; pointer-events: none;
     }
+    iframe { width: 100%; height: 100%; border: none; display: block; }
+    #map-world-terrain { width: 100%; height: 100%; display: none; }
   </style>
 </head>
 <body>
 
   <div id="header">
-    <div class="header-title">3画面連動マップ</div>
-    <div class="header-controls">
-      <select id="era-select">
-        <option value="ort_USA10">過去写真: 1945〜50年(米軍)</option>
-        <option value="ort_old10">過去写真: 1961〜69年</option>
-        <option value="gazo1">過去写真: 1974〜78年</option>
-        <option value="gazo2">過去写真: 1979〜83年</option>
-        <option value="gazo3">過去写真: 1984〜86年</option>
-        <option value="gazo4">過去写真: 1988〜90年</option>
+    <div style="font-size: 12px; font-weight: bold;">連動ビュー（過去写真・地形）</div>
+    <div style="display: flex; gap: 6px; align-items: center;">
+      <!-- 国内・海外切替 -->
+      <button id="mode-btn" class="btn-capture" style="background: #2980b9;" onclick="toggleMode()">🌐 海外</button>
+      <!-- 年代切替（国内時） -->
+      <select id="era-select" class="select-box">
+        <option value="ort_USA10">上: 1945〜50年(米軍写真)</option>
+        <option value="ort_old10">上: 1961〜69年(高度成長期)</option>
+        <option value="gazo1">上: 1974〜78年</option>
+        <option value="gazo2">上: 1979〜83年</option>
       </select>
-      <button class="btn-capture" onclick="captureMaps()">📷 画面を画像保存</button>
+      <button class="btn-capture" onclick="captureMaps()">📷 2画面保存</button>
     </div>
   </div>
 
   <div id="container">
-    <!-- 左側：最新の航空写真 -->
-    <div id="left-panel">
-      <div class="map-label">最新 航空写真（地理院）</div>
-      <div id="map1" style="width: 100%; height: 100%;"></div>
+    <!-- 上段：当時の写真（海外時は等高線地形図） -->
+    <div id="map-top">
+      <div class="map-label" id="label-top">国土地理院 過去航空写真</div>
+      <div id="map-top-leaf" style="width: 100%; height: 100%;"></div>
     </div>
-    <!-- 右側：上下分割 -->
-    <div id="right-panel">
-      <div id="map-past">
-        <div class="map-label" id="past-label">国土地理院 過去写真</div>
-        <div id="map2" style="width: 100%; height: 100%;"></div>
-      </div>
-      <div id="map-cadastre">
-        <div class="map-label">Q地図 赤色立体図（1mメッシュ）</div>
-        <div id="map3" style="width: 100%; height: 100%;"></div>
-      </div>
+    <!-- 下段：地形図（国内時はOH3 / 海外時は世界立体図） -->
+    <div id="map-bottom-container">
+      <div class="map-label" id="label-bottom">OH3 1m立体図ビューア</div>
+      <iframe id="oh3-frame" src=""></iframe>
+      <div id="map-world-terrain"></div>
     </div>
   </div>
 
   <script>
-    // 1. AppSheetのURL引数（?lat=...&lng=...&zoom=...）から初期座標を取得
     const params = new URLSearchParams(window.location.search);
     const initLat = parseFloat(params.get('lat')) || 34.6873;
     const initLng = parseFloat(params.get('lng')) || 135.5262;
     const initZoom = parseInt(params.get('zoom')) || 16;
 
-    // 2. 左側：現代 航空写真マップ
-    const map1 = L.map('map1', { zoomControl: true }).setView([initLat, initLng], initZoom);
-    L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', {
+    let currentMode = 'japan';
+
+    // 上段マップ
+    const mapTop = L.map('map-top-leaf', { zoomControl: true }).setView([initLat, initLng], initZoom);
+    let topLayer = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/ort_USA10/{z}/{x}/{y}.png', {
       attribution: '国土地理院', maxZoom: 18, crossOrigin: true
-    }).addTo(map1);
-    L.marker([initLat, initLng]).addTo(map1);
+    }).addTo(mapTop);
+    L.marker([initLat, initLng]).addTo(mapTop);
 
-    // 3. 右上：国土地理院 過去写真マップ
-    const map2 = L.map('map2', { zoomControl: false }).setView([initLat, initLng], initZoom);
-    let pastLayer = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/ort_USA10/{z}/{x}/{y}.png', {
-      attribution: '国土地理院', maxZoom: 18, crossOrigin: true
-    }).addTo(map2);
-    L.marker([initLat, initLng]).addTo(map2);
+    // 下段（海外用立体図）
+    const mapBottom = L.map('map-world-terrain', { zoomControl: false }).setView([initLat, initLng], initZoom);
+    let bottomLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', {
+      attribution: 'Esri, USGS', maxZoom: 18, crossOrigin: true
+    }).addTo(mapBottom);
+    L.marker([initLat, initLng]).addTo(mapBottom);
 
-    // 4. 右下：Q地図 赤色立体図マップ
-    const map3 = L.map('map3', { zoomControl: false }).setView([initLat, initLng], initZoom);
-    L.tileLayer('https://tiles.qchizu.com/rrim/{z}/{x}/{y}.png', {
-      attribution: 'Q地図 / アジア航測', maxZoom: 18, minZoom: 10, crossOrigin: true
-    }).addTo(map3);
-    L.marker([initLat, initLng]).addTo(map3);
+    // 下段（国内用OH3）
+    document.getElementById('oh3-frame').src = `https://oh3lab.jp/oh3/#${initZoom}/${initLat}/${initLng}`;
 
-    // 5. 3画面同期スクロール処理
-    let isSyncing = false;
-    const maps = [map1, map2, map3];
-
-    maps.forEach(sourceMap => {
-      sourceMap.on('move', () => {
-        if (isSyncing) return;
-        isSyncing = true;
-        const center = sourceMap.getCenter();
-        const zoom = sourceMap.getZoom();
-        maps.forEach(targetMap => {
-          if (targetMap !== sourceMap) {
-            targetMap.setView(center, zoom, { animate: false });
-          }
-        });
-        isSyncing = false;
-      });
+    // 海外モード連動スクロール
+    mapTop.on('move', () => {
+      if (currentMode === 'world') {
+        mapBottom.setView(mapTop.getCenter(), mapTop.getZoom(), { animate: false });
+      }
     });
 
-    // 6. 過去写真の年代切替
+    // 国内・海外切替
+    function toggleMode() {
+      if (currentMode === 'japan') {
+        currentMode = 'world';
+        document.getElementById('mode-btn').textContent = '🇯🇵 国内';
+        document.getElementById('era-select').style.display = 'none';
+        document.getElementById('label-top').textContent = '世界 等高線地形図（OpenTopo）';
+        document.getElementById('label-bottom').textContent = '世界 陰影立体図（立体地形）';
+
+        mapTop.removeLayer(topLayer);
+        topLayer = L.tileLayer('https://tile.opentopomap.org/{z}/{x}/{y}.png', {
+          attribution: 'OpenTopoMap', maxZoom: 17, crossOrigin: true
+        }).addTo(mapTop);
+
+        document.getElementById('oh3-frame').style.display = 'none';
+        document.getElementById('map-world-terrain').style.display = 'block';
+        mapBottom.invalidateSize();
+      } else {
+        currentMode = 'japan';
+        document.getElementById('mode-btn').textContent = '🌐 海外';
+        document.getElementById('era-select').style.display = 'inline-block';
+        document.getElementById('label-top').textContent = '国土地理院 過去航空写真';
+        document.getElementById('label-bottom').textContent = 'OH3 1m立体図ビューア';
+
+        mapTop.removeLayer(topLayer);
+        const eraVal = document.getElementById('era-select').value;
+        topLayer = L.tileLayer(`https://cyberjapandata.gsi.go.jp/xyz/${eraVal}/{z}/{x}/{y}.png`, {
+          attribution: '国土地理院', maxZoom: 18, crossOrigin: true
+        }).addTo(mapTop);
+
+        document.getElementById('map-world-terrain').style.display = 'none';
+        document.getElementById('oh3-frame').style.display = 'block';
+      }
+    }
+
+    // 年代切替
     document.getElementById('era-select').addEventListener('change', (e) => {
-      map2.removeLayer(pastLayer);
-      pastLayer = L.tileLayer(`https://cyberjapandata.gsi.go.jp/xyz/${e.target.value}/{z}/{x}/{y}.png`, {
-        attribution: '国土地理院', maxZoom: 18, crossOrigin: true
-      }).addTo(map2);
+      if (currentMode === 'japan') {
+        mapTop.removeLayer(topLayer);
+        topLayer = L.tileLayer(`https://cyberjapandata.gsi.go.jp/xyz/${e.target.value}/{z}/{x}/{y}.png`, {
+          attribution: '国土地理院', maxZoom: 18, crossOrigin: true
+        }).addTo(mapTop);
+      }
     });
 
-    // 7. 手動画面キャプチャ＆保存
+    // キャプチャ保存
     function captureMaps() {
       const container = document.getElementById('container');
-      html2canvas(container, {
-        useCORS: true,
-        allowTaint: true,
-        logging: false
-      }).then(canvas => {
+      html2canvas(container, { useCORS: true, allowTaint: true, logging: false }).then(canvas => {
         const link = document.createElement('a');
-        link.download = `map_compare_${Date.now()}.png`;
+        link.download = `survey_${Date.now()}.png`;
         link.href = canvas.toDataURL('image/png');
         link.click();
-      }).catch(err => {
-        alert('画像の保存に失敗しました: ' + err);
-      });
+      }).catch(err => alert('保存失敗: ' + err));
     }
   </script>
 </body>
