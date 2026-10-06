@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>戦跡調査 右側ビューア</title>
+  <title>戦跡調査 連動ビューア</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -11,11 +11,11 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; background: #1a1a1a; }
     #header {
-      height: 42px; background: #2c3e50; color: #fff; display: flex;
+      height: 44px; background: #2c3e50; color: #fff; display: flex;
       align-items: center; justify-content: space-between; padding: 0 12px; z-index: 1000;
     }
     .select-box {
-      padding: 4px 8px; font-size: 11px; border-radius: 4px; border: 1px solid #4a627a;
+      padding: 4px 6px; font-size: 11px; border-radius: 4px; border: 1px solid #4a627a;
       background: #34495e; color: #fff; cursor: pointer; outline: none;
     }
     .btn-capture {
@@ -23,128 +23,138 @@
       font-size: 11px; font-weight: bold; border-radius: 4px; cursor: pointer;
     }
     .btn-capture:hover { background: #d35400; }
-    #container { flex: 1; display: flex; flex-direction: column; width: 100%; height: calc(100vh - 42px); }
+    #container { flex: 1; display: flex; flex-direction: column; width: 100%; height: calc(100vh - 44px); }
     #map-top { flex: 1; border-bottom: 2px solid #444; position: relative; }
-    #map-bottom-container { flex: 1; position: relative; background: #fff; }
+    #map-bottom { flex: 1; position: relative; }
     .map-label {
       position: absolute; top: 8px; left: 10px; z-index: 999;
       background: rgba(0, 0, 0, 0.75); color: #fff; padding: 3px 8px;
       font-size: 11px; font-weight: bold; border-radius: 3px; pointer-events: none;
     }
-    iframe { width: 100%; height: 100%; border: none; display: block; }
-    #map-world-terrain { width: 100%; height: 100%; display: none; }
+    .layer-selector {
+      position: absolute; top: 8px; right: 10px; z-index: 999;
+    }
   </style>
 </head>
 <body>
 
   <div id="header">
-    <div style="font-size: 12px; font-weight: bold;">連動ビュー（過去写真・地形）</div>
+    <div style="font-size: 12px; font-weight: bold;">連動ビュー（過去写真 ＆ 1m微地形図）</div>
     <div style="display: flex; gap: 6px; align-items: center;">
-      <!-- 国内・海外切替 -->
-      <button id="mode-btn" class="btn-capture" style="background: #2980b9;" onclick="toggleMode()">🌐 海外</button>
-      <!-- 年代切替（国内時） -->
+      <!-- 上段：年代切替 -->
       <select id="era-select" class="select-box">
         <option value="ort_USA10">上: 1945〜50年(米軍写真)</option>
         <option value="ort_old10">上: 1961〜69年(高度成長期)</option>
         <option value="gazo1">上: 1974〜78年</option>
         <option value="gazo2">上: 1979〜83年</option>
       </select>
-      <button class="btn-capture" onclick="captureMaps()">📷 2画面保存</button>
+      <button class="btn-capture" onclick="captureMaps()">📷 2画面を保存</button>
     </div>
   </div>
 
   <div id="container">
-    <!-- 上段：当時の写真（海外時は等高線地形図） -->
+    <!-- 上段：過去航空写真 -->
     <div id="map-top">
-      <div class="map-label" id="label-top">国土地理院 過去航空写真</div>
-      <div id="map-top-leaf" style="width: 100%; height: 100%;"></div>
+      <div class="map-label">国土地理院 過去航空写真</div>
+      <div id="map1" style="width: 100%; height: 100%;"></div>
     </div>
-    <!-- 下段：地形図（国内時はOH3 / 海外時は世界立体図） -->
-    <div id="map-bottom-container">
-      <div class="map-label" id="label-bottom">OH3 1m立体図ビューア</div>
-      <iframe id="oh3-frame" src=""></iframe>
-      <div id="map-world-terrain"></div>
+    <!-- 下段：1mメッシュ微地形図（画面内で直接描画） -->
+    <div id="map-bottom">
+      <div class="map-label" id="bottom-label">大阪府 微地形図（航空レーザ）</div>
+      <div class="layer-selector">
+        <select id="terrain-select" class="select-box">
+          <option value="osaka_cs">大阪府 微地形図（航空レーザ）</option>
+          <option value="hyogo_cs">兵庫県 50cm CS立体図</option>
+          <option value="hillshade">全国 陰影起伏図（国土地理院）</option>
+          <option value="slope">全国 傾斜量図（急斜面判別）</option>
+        </select>
+      </div>
+      <div id="map2" style="width: 100%; height: 100%;"></div>
     </div>
   </div>
 
   <script>
+    // 1. AppSheetの引数から座標を取得
     const params = new URLSearchParams(window.location.search);
     const initLat = parseFloat(params.get('lat')) || 34.6873;
     const initLng = parseFloat(params.get('lng')) || 135.5262;
     const initZoom = parseInt(params.get('zoom')) || 16;
 
-    let currentMode = 'japan';
-
-    // 上段マップ
-    const mapTop = L.map('map-top-leaf', { zoomControl: true }).setView([initLat, initLng], initZoom);
-    let topLayer = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/ort_USA10/{z}/{x}/{y}.png', {
+    // 2. 上段：国土地理院 過去写真
+    const map1 = L.map('map1', { zoomControl: true }).setView([initLat, initLng], initZoom);
+    let pastLayer = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/ort_USA10/{z}/{x}/{y}.png', {
       attribution: '国土地理院', maxZoom: 18, crossOrigin: true
-    }).addTo(mapTop);
-    L.marker([initLat, initLng]).addTo(mapTop);
+    }).addTo(map1);
+    L.marker([initLat, initLng]).addTo(map1);
 
-    // 下段（海外用立体図）
-    const mapBottom = L.map('map-world-terrain', { zoomControl: false }).setView([initLat, initLng], initZoom);
-    let bottomLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', {
-      attribution: 'Esri, USGS', maxZoom: 18, crossOrigin: true
-    }).addTo(mapBottom);
-    L.marker([initLat, initLng]).addTo(mapBottom);
-
-    // 下段（国内用OH3）
-    document.getElementById('oh3-frame').src = `https://oh3lab.jp/oh3/#${initZoom}/${initLat}/${initLng}`;
-
-    // 海外モード連動スクロール
-    mapTop.on('move', () => {
-      if (currentMode === 'world') {
-        mapBottom.setView(mapTop.getCenter(), mapTop.getZoom(), { animate: false });
+    // 3. 下段：1mメッシュ微地形図レイヤー定義
+    const terrainLayers = {
+      osaka_cs: {
+        url: 'https://shi-works.com/raster-tiles/pref-osaka/osaka-csmap-tiles/{z}/{x}/{y}.webp',
+        attr: '大阪府 微地形地図 (CC BY 4.0)',
+        label: '大阪府 微地形図（航空レーザ）'
+      },
+      hyogo_cs: {
+        url: 'https://rinya-hyogo.geospatial.jp/2023/rinya/tile/csmap/{z}/{x}/{y}.png',
+        attr: '兵庫県 50cmメッシュCS立体図',
+        label: '兵庫県 50cm CS立体図'
+      },
+      hillshade: {
+        url: 'https://cyberjapandata.gsi.go.jp/xyz/hillshademap/{z}/{x}/{y}.png',
+        attr: '国土地理院',
+        label: '全国 陰影起伏図（国土地理院）'
+      },
+      slope: {
+        url: 'https://cyberjapandata.gsi.go.jp/xyz/slopemap/{z}/{x}/{y}.png',
+        attr: '国土地理院',
+        label: '全国 傾斜量図（急斜面判別）'
       }
+    };
+
+    // 下段マップ初期化（初期値：大阪府 微地形図）
+    const map2 = L.map('map2', { zoomControl: false }).setView([initLat, initLng], initZoom);
+    let terrainLayer = L.tileLayer(terrainLayers.osaka_cs.url, {
+      attribution: terrainLayers.osaka_cs.attr, maxZoom: 18, crossOrigin: true
+    }).addTo(map2);
+    L.marker([initLat, initLng]).addTo(map2);
+
+    // 4. 上下画面の完全同期スクロール
+    let isSyncing = false;
+    const maps = [map1, map2];
+    maps.forEach(sourceMap => {
+      sourceMap.on('move', () => {
+        if (isSyncing) return;
+        isSyncing = true;
+        const center = sourceMap.getCenter();
+        const zoom = sourceMap.getZoom();
+        maps.forEach(targetMap => {
+          if (targetMap !== sourceMap) {
+            targetMap.setView(center, zoom, { animate: false });
+          }
+        });
+        isSyncing = false;
+      });
     });
 
-    // 国内・海外切替
-    function toggleMode() {
-      if (currentMode === 'japan') {
-        currentMode = 'world';
-        document.getElementById('mode-btn').textContent = '🇯🇵 国内';
-        document.getElementById('era-select').style.display = 'none';
-        document.getElementById('label-top').textContent = '世界 等高線地形図（OpenTopo）';
-        document.getElementById('label-bottom').textContent = '世界 陰影立体図（立体地形）';
-
-        mapTop.removeLayer(topLayer);
-        topLayer = L.tileLayer('https://tile.opentopomap.org/{z}/{x}/{y}.png', {
-          attribution: 'OpenTopoMap', maxZoom: 17, crossOrigin: true
-        }).addTo(mapTop);
-
-        document.getElementById('oh3-frame').style.display = 'none';
-        document.getElementById('map-world-terrain').style.display = 'block';
-        mapBottom.invalidateSize();
-      } else {
-        currentMode = 'japan';
-        document.getElementById('mode-btn').textContent = '🌐 海外';
-        document.getElementById('era-select').style.display = 'inline-block';
-        document.getElementById('label-top').textContent = '国土地理院 過去航空写真';
-        document.getElementById('label-bottom').textContent = 'OH3 1m立体図ビューア';
-
-        mapTop.removeLayer(topLayer);
-        const eraVal = document.getElementById('era-select').value;
-        topLayer = L.tileLayer(`https://cyberjapandata.gsi.go.jp/xyz/${eraVal}/{z}/{x}/{y}.png`, {
-          attribution: '国土地理院', maxZoom: 18, crossOrigin: true
-        }).addTo(mapTop);
-
-        document.getElementById('map-world-terrain').style.display = 'none';
-        document.getElementById('oh3-frame').style.display = 'block';
-      }
-    }
-
-    // 年代切替
+    // 5. 上段：過去写真年代切替
     document.getElementById('era-select').addEventListener('change', (e) => {
-      if (currentMode === 'japan') {
-        mapTop.removeLayer(topLayer);
-        topLayer = L.tileLayer(`https://cyberjapandata.gsi.go.jp/xyz/${e.target.value}/{z}/{x}/{y}.png`, {
-          attribution: '国土地理院', maxZoom: 18, crossOrigin: true
-        }).addTo(mapTop);
-      }
+      map1.removeLayer(pastLayer);
+      pastLayer = L.tileLayer(`https://cyberjapandata.gsi.go.jp/xyz/${e.target.value}/{z}/{x}/{y}.png`, {
+        attribution: '国土地理院', maxZoom: 18, crossOrigin: true
+      }).addTo(map1);
     });
 
-    // キャプチャ保存
+    // 6. 下段：微地形図レイヤー切替
+    document.getElementById('terrain-select').addEventListener('change', (e) => {
+      const selected = terrainLayers[e.target.value];
+      map2.removeLayer(terrainLayer);
+      terrainLayer = L.tileLayer(selected.url, {
+        attribution: selected.attr, maxZoom: 18, crossOrigin: true
+      }).addTo(map2);
+      document.getElementById('bottom-label').textContent = selected.label;
+    });
+
+    // 7. 画面キャプチャ保存
     function captureMaps() {
       const container = document.getElementById('container');
       html2canvas(container, { useCORS: true, allowTaint: true, logging: false }).then(canvas => {
