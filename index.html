@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>戦跡調査 連動ビューア</title>
+  <title>戦跡調査 連動ビューア（リアルタイム赤色立体図）</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -39,7 +39,7 @@
 <body>
 
   <div id="header">
-    <div style="font-size: 12px; font-weight: bold;">連動ビュー（過去写真 ＆ 1m微地形図）</div>
+    <div style="font-size: 12px; font-weight: bold;">連動ビュー（過去写真 ＆ リアルタイム赤色立体図）</div>
     <div style="display: flex; gap: 6px; align-items: center;">
       <!-- 上段：年代切替 -->
       <select id="era-select" class="select-box">
@@ -58,15 +58,14 @@
       <div class="map-label">国土地理院 過去航空写真</div>
       <div id="map1" style="width: 100%; height: 100%;"></div>
     </div>
-    <!-- 下段：1mメッシュ微地形図（画面内で直接描画） -->
+    <!-- 下段：リアルタイム赤色立体図 -->
     <div id="map-bottom">
-      <div class="map-label" id="bottom-label">大阪府 微地形図（航空レーザ）</div>
+      <div class="map-label" id="bottom-label">リアルタイム赤色立体図（1m/5m統合DEM）</div>
       <div class="layer-selector">
         <select id="terrain-select" class="select-box">
-          <option value="osaka_cs">大阪府 微地形図（航空レーザ）</option>
-          <option value="hyogo_cs">兵庫県 50cm CS立体図</option>
-          <option value="hillshade">全国 陰影起伏図（国土地理院）</option>
-          <option value="slope">全国 傾斜量図（急斜面判別）</option>
+          <option value="red_relief">赤色立体図（リアルタイム計算）</option>
+          <option value="hillshade">国土地理院 陰影起伏図</option>
+          <option value="slope">国土地理院 傾斜量図</option>
         </select>
       </div>
       <div id="map2" style="width: 100%; height: 100%;"></div>
@@ -74,51 +73,139 @@
   </div>
 
   <script>
-    // 1. AppSheetの引数から座標を取得
+    // 1. 初期座標取得
     const params = new URLSearchParams(window.location.search);
     const initLat = parseFloat(params.get('lat')) || 34.6873;
     const initLng = parseFloat(params.get('lng')) || 135.5262;
     const initZoom = parseInt(params.get('zoom')) || 16;
 
-    // 2. 上段：国土地理院 過去写真
+    // 2. 上段：国土地理院 過去航空写真
     const map1 = L.map('map1', { zoomControl: true }).setView([initLat, initLng], initZoom);
     let pastLayer = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/ort_USA10/{z}/{x}/{y}.png', {
       attribution: '国土地理院', maxZoom: 18, crossOrigin: true
     }).addTo(map1);
     L.marker([initLat, initLng]).addTo(map1);
 
-    // 3. 下段：1mメッシュ微地形図レイヤー定義
-    const terrainLayers = {
-      osaka_cs: {
-        url: 'https://shi-works.com/raster-tiles/pref-osaka/osaka-csmap-tiles/{z}/{x}/{y}.webp',
-        attr: '大阪府 微地形地図 (CC BY 4.0)',
-        label: '大阪府 微地形図（航空レーザ）'
-      },
-      hyogo_cs: {
-        url: 'https://rinya-hyogo.geospatial.jp/2023/rinya/tile/csmap/{z}/{x}/{y}.png',
-        attr: '兵庫県 50cmメッシュCS立体図',
-        label: '兵庫県 50cm CS立体図'
-      },
-      hillshade: {
-        url: 'https://cyberjapandata.gsi.go.jp/xyz/hillshademap/{z}/{x}/{y}.png',
-        attr: '国土地理院',
-        label: '全国 陰影起伏図（国土地理院）'
-      },
-      slope: {
-        url: 'https://cyberjapandata.gsi.go.jp/xyz/slopemap/{z}/{x}/{y}.png',
-        attr: '国土地理院',
-        label: '全国 傾斜量図（急斜面判別）'
-      }
-    };
+    // 3. 下段：リアルタイム赤色立体図レイヤー（Leaflet GridLayer拡張）
+    const RedReliefLayer = L.GridLayer.extend({
+      createTile: function(coords, done) {
+        const canvas = L.DomUtil.create('canvas', 'leaflet-tile');
+        canvas.width = 256;
+        canvas.height = 256;
+        const ctx = canvas.getContext('2d');
 
-    // 下段マップ初期化（初期値：大阪府 微地形図）
+        const img = new Image();
+        img.crossOrigin = 'Anonymous';
+        // 産総研 シームレス標高タイル（統合DEM：1m/5m/10mを包含）
+        // URLテンプレート順序: {z}/{y}/{x}
+        img.src = `https://tiles.gsj.jp/tiles/elev/mixed/${coords.z}/${coords.y}/${coords.x}.png`;
+
+        img.onload = function() {
+          const offCanvas = document.createElement('canvas');
+          offCanvas.width = 256;
+          offCanvas.height = 256;
+          const offCtx = offCanvas.getContext('2d');
+          offCtx.drawImage(img, 0, 0);
+
+          const srcData = offCtx.getImageData(0, 0, 256, 256).data;
+          const outImgData = ctx.createImageData(256, 256);
+          const outData = outImgData.data;
+
+          // 標高デコード配列
+          const elev = new Float32Array(256 * 256);
+          for (let i = 0; i < 256 * 256; i++) {
+            const p = i * 4;
+            const a = srcData[p + 3];
+            if (a === 0) {
+              elev[i] = -99999;
+              continue;
+            }
+            const r = srcData[p];
+            const g = srcData[p + 1];
+            const b = srcData[p + 2];
+            const xVal = (r << 16) | (g << 8) | b;
+            if (xVal === 0x800000) {
+              elev[i] = -99999; // 無効値
+            } else if (xVal < 0x800000) {
+              elev[i] = xVal * 0.01;
+            } else {
+              elev[i] = (xVal - 0x1000000) * 0.01;
+            }
+          }
+
+          // ピクセル分解能（メートル）算出
+          const n = Math.PI - 2 * Math.PI * (coords.y + 0.5) / Math.pow(2, coords.z);
+          const latRad = Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+          const res = (156543.03392 * Math.cos(latRad)) / Math.pow(2, coords.z);
+
+          const getElev = (px, py) => {
+            px = Math.max(0, Math.min(255, px));
+            py = Math.max(0, Math.min(255, py));
+            return elev[py * 256 + px];
+          };
+
+          // ピクセルごとの傾斜・陰影・赤色立体図計算
+          for (let y = 0; y < 256; y++) {
+            for (let x = 0; x < 256; x++) {
+              const idx = (y * 256 + x) * 4;
+              const c = getElev(x, y);
+
+              if (c === -99999) {
+                // 水域（海など）
+                outData[idx] = 210;
+                outData[idx + 1] = 225;
+                outData[idx + 2] = 240;
+                outData[idx + 3] = 255;
+                continue;
+              }
+
+              const eW = getElev(x - 1, y);
+              const eE = getElev(x + 1, y);
+              const eN = getElev(x, y - 1);
+              const eS = getElev(x, y + 1);
+
+              // 傾斜量（勾配）
+              const dx = (eE - eW) / (2 * res);
+              const dy = (eS - eN) / (2 * res);
+              const slope = Math.sqrt(dx * dx + dy * dy);
+              const slopeDeg = Math.atan(slope) * (180 / Math.PI);
+
+              // 局所凹凸（尾根は明るく、谷は暗く）
+              const lap = (eW + eE + eN + eS) - 4 * c;
+              const ridgeFactor = Math.max(-0.45, Math.min(0.45, -lap * 0.9));
+
+              // 赤色立体図配色：平坦は淡いベージュ、急斜面は鮮やかな赤
+              const t = Math.min(1.0, slopeDeg / 32.0);
+              let rCol = 245 - 65 * t;  // 245 -> 180
+              let gCol = 230 - 200 * t; // 230 -> 30
+              let bCol = 210 - 180 * t; // 210 -> 30
+
+              const shade = 1.0 + ridgeFactor;
+              outData[idx]     = Math.min(255, Math.max(0, rCol * shade));
+              outData[idx + 1] = Math.min(255, Math.max(0, gCol * shade));
+              outData[idx + 2] = Math.min(255, Math.max(0, bCol * shade));
+              outData[idx + 3] = 255;
+            }
+          }
+
+          ctx.putImageData(outImgData, 0, 0);
+          done(null, canvas);
+        };
+
+        img.onerror = function() {
+          done(null, canvas);
+        };
+
+        return canvas;
+      }
+    });
+
+    // 4. 下段マップ初期化
     const map2 = L.map('map2', { zoomControl: false }).setView([initLat, initLng], initZoom);
-    let terrainLayer = L.tileLayer(terrainLayers.osaka_cs.url, {
-      attribution: terrainLayers.osaka_cs.attr, maxZoom: 18, crossOrigin: true
-    }).addTo(map2);
+    let currentTerrainLayer = new RedReliefLayer({ maxZoom: 18, minZoom: 8 }).addTo(map2);
     L.marker([initLat, initLng]).addTo(map2);
 
-    // 4. 上下画面の完全同期スクロール
+    // 5. 上下画面の完全同期スクロール
     let isSyncing = false;
     const maps = [map1, map2];
     maps.forEach(sourceMap => {
@@ -136,7 +223,7 @@
       });
     });
 
-    // 5. 上段：過去写真年代切替
+    // 6. 上段：過去写真年代切替
     document.getElementById('era-select').addEventListener('change', (e) => {
       map1.removeLayer(pastLayer);
       pastLayer = L.tileLayer(`https://cyberjapandata.gsi.go.jp/xyz/${e.target.value}/{z}/{x}/{y}.png`, {
@@ -144,17 +231,26 @@
       }).addTo(map1);
     });
 
-    // 6. 下段：微地形図レイヤー切替
+    // 7. 下段：地形レイヤー切替
     document.getElementById('terrain-select').addEventListener('change', (e) => {
-      const selected = terrainLayers[e.target.value];
-      map2.removeLayer(terrainLayer);
-      terrainLayer = L.tileLayer(selected.url, {
-        attribution: selected.attr, maxZoom: 18, crossOrigin: true
-      }).addTo(map2);
-      document.getElementById('bottom-label').textContent = selected.label;
+      map2.removeLayer(currentTerrainLayer);
+      if (e.target.value === 'red_relief') {
+        currentTerrainLayer = new RedReliefLayer({ maxZoom: 18, minZoom: 8 }).addTo(map2);
+        document.getElementById('bottom-label').textContent = 'リアルタイム赤色立体図（1m/5m統合DEM）';
+      } else if (e.target.value === 'hillshade') {
+        currentTerrainLayer = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/hillshademap/{z}/{x}/{y}.png', {
+          attribution: '国土地理院', maxZoom: 18, crossOrigin: true
+        }).addTo(map2);
+        document.getElementById('bottom-label').textContent = '国土地理院 陰影起伏図';
+      } else if (e.target.value === 'slope') {
+        currentTerrainLayer = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/slopemap/{z}/{x}/{y}.png', {
+          attribution: '国土地理院', maxZoom: 18, crossOrigin: true
+        }).addTo(map2);
+        document.getElementById('bottom-label').textContent = '国土地理院 傾斜量図';
+      }
     });
 
-    // 7. 画面キャプチャ保存
+    // 8. 2画面キャプチャ保存
     function captureMaps() {
       const container = document.getElementById('container');
       html2canvas(container, { useCORS: true, allowTaint: true, logging: false }).then(canvas => {
