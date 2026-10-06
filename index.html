@@ -61,7 +61,7 @@
     </select>
     
     <div class="btn-group">
-      <button class="btn btn-qchizu" onclick="openQChizu()">🗺️ Q地図で微地形を開く</button>
+      <button class="btn btn-qchizu" onclick="openQChizu()">🗺️ Q地図で1mメッシュを開く</button>
       <button class="btn btn-capture" onclick="captureMap()">📷 保存</button>
     </div>
   </div>
@@ -71,11 +71,11 @@
   </div>
 
   <script>
-    // 1. AppSheetから渡された座標（?lat=...&lng=...&zoom=...）を取得
+    // 1. AppSheetから渡された座標を取得
     const params = new URLSearchParams(window.location.search);
     const initLat = parseFloat(params.get('lat')) || 34.6873;
     const initLng = parseFloat(params.get('lng')) || 135.5262;
-    const initZoom = parseInt(params.get('zoom')) || 17; // Q地図に合わせて少し拡大気味に
+    const initZoom = parseInt(params.get('zoom')) || 17;
 
     // 2. マップの初期化
     const map = L.map('map', { zoomControl: true }).setView([initLat, initLng], initZoom);
@@ -96,12 +96,11 @@
       }).addTo(map);
     });
 
-    // 4. Q地図を別タブで開く処理（画面中央の座標を渡す）
+    // 4. Q地図を別タブで開く処理（開いた瞬間1m赤色立体図＋陰影が直接出るパラメータをセット）
     function openQChizu() {
       const center = map.getCenter();
-      const zoom = map.getZoom();
-      // Q地図の公式URL形式に合わせる: https://qchizu.jp/maps/#ズーム/緯度/経度/
-      const url = `https://qchizu.jp/maps/#${zoom}/${center.lat}/${center.lng}/`;
+      // レイヤーパラメータとして「sekisyoku_dem1a」を末尾に指定して開きます
+      const url = `https://qchizu.jp/maps/#17/${center.lat}/${center.lng}/&base=sekisyoku_dem1a&layers=hillshademap`;
       window.open(url, '_blank');
     }
 
